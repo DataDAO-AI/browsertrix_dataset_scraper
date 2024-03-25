@@ -1,4 +1,6 @@
-use std::process::{Command, Output};
+use std::{fs, process::Command};
+
+use serde::Deserialize;
 
 macro_rules! panic_with_stderr {
   ($output:ident, $process_name:literal) => {
@@ -13,15 +15,21 @@ macro_rules! panic_with_stderr {
   };
 }
 
-fn main() {
+#[derive(Deserialize, Debug)]
+struct ParsedDocument {
+  url: String,
+  text: String,
+}
+
+fn scrape_url(url: &str, folder_name: &str) {
   let browsertrix_output = Command::new("docker")
     .arg("run")
     .args(["-v", "./crawls:/crawls/"])
     .args(["-d", "webrecorder/browsertrix-crawler"])
     .arg("crawl")
-    .args(["--url", "https://example.com/"])
+    .args(["--url", url])
     .arg("--text")
-    .args(["--collection", "test"])
+    .args(["--collection", folder_name])
     .output()
     .expect("failed to execte browsertrix through docker");
   let browsertrix_stdout = match browsertrix_output.status.code() {
@@ -71,4 +79,45 @@ fn main() {
     }
   };
   println!("docker wait stdout: {}", docker_wait_stdout);
+}
+
+fn gather_documents_from_crawl(folder_name: &str) -> Vec<ParsedDocument> {
+  let file_contents = fs::read_to_string(format!(
+    "./crawls/collections/{}/pages/pages.jsonl",
+    folder_name
+  ))
+  .expect(&format!(
+    "Failed to open pages.jsonl file for {}",
+    folder_name
+  ));
+  println!("\nFile contents:\n\n{}", file_contents);
+  let mut lines = file_contents.lines().into_iter();
+  lines.next();
+  let mut line_strings = lines
+    .map(|line| String::from(line))
+    .collect::<Vec<String>>();
+  let documents: Vec<ParsedDocument> = line_strings
+    .iter_mut()
+    .filter_map(|line| {
+      if line.is_empty() {
+        None
+      } else {
+        Some(unsafe { simd_json::from_str(line) }.expect(&format!(
+          "Failed to parse json document for {}",
+          folder_name
+        )))
+      }
+    })
+    .collect();
+  println!("documents: {}", documents.len());
+  documents
+}
+
+fn main() {
+  let folder_name = "0";
+  scrape_url("https://example.com/", folder_name);
+  let documents = gather_documents_from_crawl(folder_name);
+  for document in documents {
+    println!("{}: {}\n\n", document.url, document.text);
+  }
 }

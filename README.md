@@ -46,9 +46,7 @@ current draft command:
       ```
         * idk what the name of the inner folder should be, just took that one from openwebtext chunk 0. Does the name matter for RPv2's purposes?
 ## todo
-* once the `docker wait` command finishes, load the `pages/pages.jsonl` file, and extract text from each line
-  * use `simd-json` crate
-  * save it in a way that's compatible with the OWT format
+* save loaded documents into an OWT-compatible file structure
 * spawn the browsertrix process with multiple threads
 * do the processing of the `pages.jsonl` file in another thread
 * install browsertrix plugins
