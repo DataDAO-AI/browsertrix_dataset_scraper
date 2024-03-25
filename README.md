@@ -47,7 +47,6 @@ current draft command:
         * idk what the name of the inner folder should be, just took that one from openwebtext chunk 0. Does the name matter for RPv2's purposes?
 
 ## todo
-* do the processing of the `pages.jsonl` file in another thread
 * spawn the browsertrix process with multiple threads
 * install browsertrix plugins
 * try to run the redpajamav2 code on the output to ensure formatting is correct

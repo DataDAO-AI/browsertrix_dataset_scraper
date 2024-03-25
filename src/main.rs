@@ -2,6 +2,8 @@ use std::{fs, io::Write, process::Command};
 
 use serde::Deserialize;
 
+use tokio::task::{JoinError, JoinHandle};
+
 macro_rules! panic_with_stderr {
   ($output:ident, $process_name:literal) => {
     panic!(
@@ -131,9 +133,29 @@ fn save_documents(
   Ok(())
 }
 
-fn main() {
-  let folder_name = "0";
-  scrape_url("https://example.com/", folder_name);
-  let documents = gather_documents_from_crawl(folder_name);
-  save_documents(folder_name, documents).expect("Failed to save documents");
+#[tokio::main]
+async fn main() {
+  let urls = [
+    "https://example.com/",
+    "https://kristenrankin.art/",
+    //"https://webscraper.io/test-sites/e-commerce/allinone/",
+  ];
+  let mut document_processing_join_handles: Vec<JoinHandle<()>> = vec![];
+
+  for (index, url) in urls.into_iter().enumerate() {
+    println!("{}: {}", index, url);
+    let folder_name = format!("{}", index);
+    scrape_url(url, &folder_name);
+    document_processing_join_handles.push(tokio::spawn(async move {
+      let documents = gather_documents_from_crawl(&folder_name);
+      save_documents(&folder_name, documents)
+        .expect("Failed to save documents");
+    }));
+  }
+
+  for handle in document_processing_join_handles {
+    handle
+      .await
+      .expect("Failed to join document processing handle");
+  }
 }
