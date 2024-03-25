@@ -1,4 +1,4 @@
-use std::{fs, process::Command};
+use std::{fs, io::Write, process::Command};
 
 use serde::Deserialize;
 
@@ -52,23 +52,19 @@ fn scrape_url(url: &str, folder_name: &str) {
       panic!("Failed to get exit status code for browsertrix docker process")
     }
   };
-  println!(
-    "browsertrix docker process id: [{}]",
-    browsertrix_stdout.trim()
-  );
   let docker_wait_output = Command::new("docker")
     .arg("wait")
     .arg(browsertrix_stdout.trim())
     .output()
     .expect("failed to execute docker wait for browsertrix container");
-  let docker_wait_stdout = match docker_wait_output.status.code() {
+  match docker_wait_output.status.code() {
     Some(exit_code) => {
       if exit_code == 0 {
         if !docker_wait_output.stderr.is_empty() {
           panic_with_stderr!(docker_wait_output, "docker wait");
         }
-        String::from_utf8(docker_wait_output.stdout)
-          .expect("failed to interpret stdout of docket wait command as String")
+        /*String::from_utf8(docker_wait_output.stdout)
+        .expect("failed to interpret stdout of docket wait command as String")*/
       } else {
         println!("Recieved exit code {} from docker wait process", exit_code);
         panic_with_stderr!(docker_wait_output, "docker wait");
@@ -77,8 +73,7 @@ fn scrape_url(url: &str, folder_name: &str) {
     None => {
       panic!("Failed to get exit status code for docker wait process");
     }
-  };
-  println!("docker wait stdout: {}", docker_wait_stdout);
+  }
 }
 
 fn gather_documents_from_crawl(folder_name: &str) -> Vec<ParsedDocument> {
@@ -90,7 +85,6 @@ fn gather_documents_from_crawl(folder_name: &str) -> Vec<ParsedDocument> {
     "Failed to open pages.jsonl file for {}",
     folder_name
   ));
-  println!("\nFile contents:\n\n{}", file_contents);
   let mut lines = file_contents.lines().into_iter();
   lines.next();
   let mut line_strings = lines
@@ -109,15 +103,37 @@ fn gather_documents_from_crawl(folder_name: &str) -> Vec<ParsedDocument> {
       }
     })
     .collect();
-  println!("documents: {}", documents.len());
   documents
+}
+
+fn ensure_directory_exists(path: &str) {
+  match std::fs::create_dir_all(path) {
+    Ok(_) => {}
+    Err(err) => match err.kind() {
+      std::io::ErrorKind::AlreadyExists => {}
+      _ => panic!("{:?}", err),
+    },
+  }
+}
+
+fn save_documents(
+  folder_name: &str,
+  documents: Vec<ParsedDocument>,
+) -> std::io::Result<()> {
+  ensure_directory_exists(&format!("./dataset/{}/", folder_name));
+  for (index, document) in documents.into_iter().enumerate() {
+    let mut file = std::fs::File::create(format!(
+      "./dataset/{}/{}.txt",
+      folder_name, index
+    ))?;
+    file.write_all(document.text.as_bytes())?;
+  }
+  Ok(())
 }
 
 fn main() {
   let folder_name = "0";
   scrape_url("https://example.com/", folder_name);
   let documents = gather_documents_from_crawl(folder_name);
-  for document in documents {
-    println!("{}: {}\n\n", document.url, document.text);
-  }
+  save_documents(folder_name, documents).expect("Failed to save documents");
 }
