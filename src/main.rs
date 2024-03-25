@@ -1,14 +1,18 @@
-use std::process::Command;
+use std::process::{Command, Output};
 
-/*
-docker run
-       -v ./crawls:/crawls/
-       -d webrecorder/browsertrix-crawler
-       crawl
-       --url https://example.com/
-       --text
-       --collection test
-*/
+macro_rules! panic_with_stderr {
+  ($output:ident, $process_name:literal) => {
+    panic!(
+      "{} process returned stderr:\n{}",
+      $process_name,
+      String::from_utf8($output.stderr).expect(&format!(
+        "failed to interpret stderr of {} command as String",
+        $process_name
+      ))
+    )
+  };
+}
+
 fn main() {
   let browsertrix_output = Command::new("docker")
     .arg("run")
@@ -19,32 +23,52 @@ fn main() {
     .arg("--text")
     .args(["--collection", "test"])
     .output()
-    .expect("failed to execte ls");
-  match browsertrix_output.status.code() {
+    .expect("failed to execte browsertrix through docker");
+  let browsertrix_stdout = match browsertrix_output.status.code() {
     Some(exit_code) => {
       if exit_code == 0 {
         if !browsertrix_output.stderr.is_empty() {
-          panic!(
-            "browsertrix docker process returned stderr:\n{}",
-            String::from_utf8(browsertrix_output.stderr).expect(
-              "failed to interpret stderr of browsertrix command as String",
-            )
-          )
+          panic_with_stderr!(browsertrix_output, "browsertrix");
         }
-        let browsertrix_stdout = String::from_utf8(browsertrix_output.stdout)
-          .expect(
-            "failed to interpret stdout of browsertrix command as String",
-          );
-        println!("stdout: {}", browsertrix_stdout);
+        String::from_utf8(browsertrix_output.stdout)
+          .expect("failed to interpret stdout of browsertrix command as String")
       } else {
-        panic!(
+        println!(
           "Recieved exit code {} from browsertrix docker process",
           exit_code
-        )
+        );
+        panic_with_stderr!(browsertrix_output, "browsertrix");
       }
     }
     None => {
       panic!("Failed to get exit status code for browsertrix docker process")
     }
-  }
+  };
+  println!(
+    "browsertrix docker process id: [{}]",
+    browsertrix_stdout.trim()
+  );
+  let docker_wait_output = Command::new("docker")
+    .arg("wait")
+    .arg(browsertrix_stdout.trim())
+    .output()
+    .expect("failed to execute docker wait for browsertrix container");
+  let docker_wait_stdout = match docker_wait_output.status.code() {
+    Some(exit_code) => {
+      if exit_code == 0 {
+        if !docker_wait_output.stderr.is_empty() {
+          panic_with_stderr!(docker_wait_output, "docker wait");
+        }
+        String::from_utf8(docker_wait_output.stdout)
+          .expect("failed to interpret stdout of docket wait command as String")
+      } else {
+        println!("Recieved exit code {} from docker wait process", exit_code);
+        panic_with_stderr!(docker_wait_output, "docker wait");
+      }
+    }
+    None => {
+      panic!("Failed to get exit status code for docker wait process");
+    }
+  };
+  println!("docker wait stdout: {}", docker_wait_stdout);
 }
