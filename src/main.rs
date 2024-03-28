@@ -2,7 +2,14 @@ use std::{fs, io::Write, process::Command};
 
 use serde::Deserialize;
 
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
+
+const WORKER_COUNT: usize = 4;
+const EXTENSIONS: [&str; 3] = [
+  "uBlock0.chromium",
+  "Consent-O-Matic-1.0.13/Extension/",
+  "bypass-paywalls-chrome-clean-v3.6.1.0",
+];
 
 macro_rules! panic_with_stderr {
   ($output:ident, $process_name:literal) => {
@@ -21,17 +28,36 @@ macro_rules! panic_with_stderr {
 struct ParsedDocument {
   url: String,
   text: String,
+  status: i32,
 }
 
 fn scrape_url(url: &str, folder_name: &str) {
-  let browsertrix_output = Command::new("docker")
+  let mut browsertrix_command = Command::new("docker");
+  browsertrix_command
     .arg("run")
+    .args([
+      "-e",
+      &format!(
+        "CHROME_FLAGS=\"--disable-extensions-except={}\"",
+        &EXTENSIONS
+          .iter()
+          .map(|filename: &&str| { format!("/ext/{}/", filename) })
+          .reduce(|a, b| a + "," + &b)
+          .unwrap_or("".to_string()),
+      ),
+    ])
     .args(["-v", "./crawls:/crawls/"])
+    .args(["-v", "./chrome_plugins/:/ext/"])
+    .args(["-v", "./chrome_profile/:/chrome_profile/"])
     .args(["-d", "webrecorder/browsertrix-crawler"])
     .arg("crawl")
+    .args(["--profile", "\"/chrome_profile/profile.tar.gz\""])
+    .args(["--workers", WORKER_COUNT.to_string().as_ref()])
     .args(["--url", url])
     .arg("--text")
-    .args(["--collection", folder_name])
+    .args(["--collection", folder_name]);
+  //println!("{:?}", browsertrix_command);
+  let browsertrix_output = browsertrix_command
     .output()
     .expect("failed to execte browsertrix through docker");
   let browsertrix_stdout = match browsertrix_output.status.code() {

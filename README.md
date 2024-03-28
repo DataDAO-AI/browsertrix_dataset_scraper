@@ -1,52 +1,23 @@
-Goal: take a big list of urls from a json file, and scrape all of them, ultimately turning them into one big dataset. Ideally this should be in the same format as OpenWebText so that the RedPajamaV2 code for OWT can be applied directly to it.
+Rust code for scraping with Browsertrix.
 
-## useful info
+## to run:
 
-### running browsertrix
-Default suggested command from browsertrix documentation:
-`docker run -v $PWD/crawls:/crawls/ -it webrecorder/browsertrix-crawler crawl --url [URL] --generateWACZ --text --collection test`
-  * `-it` is a combo of `-i` and `-t`
-    * `-t` attaches the container output to the terminal (prob don't want)
-    * `-i` attaches terminal input to the docker process (can be escaped with `ctrl-D`) (prob don't want)
-    * `-v $PWD/crawls:/crawls/` identifies `./crawls` with the `/crawls/` directory in the docker container, so that the output is saved to the local `./crawls` directory
+First, ensure that docker and [Browsertrix Crawler](https://crawler.docs.browsertrix.com/user-guide/) are installed.
 
-current draft command:
-`docker run -v ./crawls:/crawls/ -d webrecorder/browsertrix-crawler crawl --url https://example.com/ --text --collection test`
-  * This command scrapes everything from a given url, and will output in a file at `./crawls/collections/[CRAWL_NAME]/pages/pages.jsonl`
-    * `[CRAWL_NAME]` is whatever is passed to the browsertrix `--collection` argument
-    * Each line is a json object, where the relevant fields seem to be `url` and `text` (which seems to be the extracted text, not sure if there are options for this)
-    * it outputs a docker container id (a 64 character hex string), which can then be used with `docker wait [CONTAINER_ID]` to wait for that container to finish running, returns the exit code (should be 0 if everything's ok, should mark any that don't end with 1 to be rerun later)
+Run `download_plugins.sh` to download the extensions that browsertrix will use in the crawl.
 
-### browsertrix plugins
-* from the old documentation (only seems to exist in an old version of the README from ~6 months ago, not included in the current documentation, hope this still works?):
-  * **Install uBlock Origin adblocker or any other browser extension**
+### run in browsertrix's interactive mode
+This starts a local server at `localhost:9223` that displays the brave browser, and can save a profile to be used during the crawl. This can be used to configure extensions.
 
-    ```bash
-    wget https://github.com/gorhill/uBlock/releases/download/1.41.8/uBlock0_1.41.8.chromium.zip
-    unzip uBlock0_1.41.8.chromium.zip
-    docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/ublock --load-extension=/ext/ublock" -v $PWD/uBlock0.chromium:/ext/ublock ...
-    ```
-  * comes from here: https://github.com/webrecorder/browsertrix-crawler/tree/debfe8945fad30d442687161da2ba6dbd55dfa27
-* plugins we want:
-  * GDPR consent bypassing
-    * Consent-O-Matic: https://chromewebstore.google.com/detail/consent-o-matic/mdjildafknihdffpkfmmpnpoiajfjnjd
-  * ad-blocking 
-    * u-block origin seems good: https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm
-  * anti-adblock bypassing, to the extent that isn't built into the adblocker
-  * paywall bypass
-### OpenWebText format
-* It looks like OWT is just organized as a folder of (.xz compressed) folders of raw text files
-  * so I guess it would work fine if we just put everything in one big folder? So it's just like:
-    * ```
-      - openwebtextv3
-        - urlsf_subset00-1_data.xz
-          - 1.txt
-          - 2.txt
-          ...
-      ```
-        * idk what the name of the inner folder should be, just took that one from openwebtext chunk 0. Does the name matter for RPv2's purposes?
+```
+docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/ext/Consent-O-Matic-1.0.13/Extension/,/ext/bypass-paywalls-chrome-clean-v3.6.1.0/" -p 6080:6080 -p 9223:9223 -v ./chrome_plugins/:/ext/ -v $PWD/chrome_profile/:/chrome_profile/ -it webrecorder/browsertrix-crawler create-login-profile --url "https://example.com/" --profile "/chrome_profile/profile.tar.gz" --filename "/chrome_profile/newProfile.tar.gz"
+```
 
 ## todo
-* spawn the browsertrix process with multiple threads
-* install browsertrix plugins
-* try to run the redpajamav2 code on the output to ensure formatting is correct
+* given a list of urls, order them such that requests to any single domain are as spread out as possible to avoid rate limiting
+* log failures
+  * status code
+  * very short documents
+    * or maybe, shorter than OpenWebTextv2's version, if it exists
+* command line args for
+* for each domain, try headless vs headful, and also with/without extensions, and find the cheapest setup that works
