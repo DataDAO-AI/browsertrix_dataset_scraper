@@ -4,20 +4,30 @@ Rust code for scraping with Browsertrix.
 
 First, ensure that docker and [Browsertrix Crawler](https://crawler.docs.browsertrix.com/user-guide/) are installed.
 
-Run `download_plugins.sh` to download the extensions that browsertrix will use in the crawl.
+# plugins
+
+To redownload the extensions that browsertrix will use in the crawl, run `download_plugins.sh`. After freshly downloading the extensions, they need to be manually configured. Current configuration:
+* `ublock`: With browsertrix's interactive mode active, go to the extension's settings.
+  * Under the `Settings` tab (opens by default) enable:
+    * check "Block media elements larger than <N> kb", set N to 5 or smth
+    * check "Block remote fonts"
+  * Under the `Filter list` tab:
+    * check everything that seems worthwhile.
+* `Bypass Paywalls Clean`: in the extension's `manifest.json`, add `"http://*/*","https://*/*",` to the `permissions` field.
 
 ### run in browsertrix's interactive mode
-This starts a local server at `localhost:9223` that displays the brave browser, and can save a profile to be used during the crawl. This can be used to configure extensions.
+The following command starts a local server at `localhost:9223` that displays the brave browser, and can save a profile to be used during the crawl. This can be used to configure extensions. The current profile at `./chrome_profile/profile.tar.gz` is used as a starting point, and the new profile is saved to `./chrome_profile/new_profile.tar.gz`. The main scraper script uses `profile.tar.gz`, so make sure to delete the old and rename the new profile after making modifications to the profile.
 
 ```
-docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/ext/Consent-O-Matic-1.0.13/Extension/,/ext/bypass-paywalls-chrome-clean-v3.6.1.0/" -p 6080:6080 -p 9223:9223 -v ./chrome_plugins/:/ext/ -v $PWD/chrome_profile/:/chrome_profile/ -it webrecorder/browsertrix-crawler create-login-profile --url "https://example.com/" --profile "/chrome_profile/profile.tar.gz" --filename "/chrome_profile/newProfile.tar.gz"
+docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/ext/bypass-paywalls-chrome-clean-v3.6.1.0/" -p 6080:6080 -p 9223:9223 -v ./chrome_plugins/:/ext/ -v ./chrome_profile/:/chrome_profile/ -it webrecorder/browsertrix-crawler create-login-profile --url "https://example.com/" --profile "/chrome_profile/profile.tar.gz" --filename "/chrome_profile/new_profile.tar.gz"
 ```
 
 ## todo
-* given a list of urls, order them such that requests to any single domain are as spread out as possible to avoid rate limiting
+* reorder urls such that requests to any single domain are as spread out as possible to avoid rate limiting
 * log failures
   * status code
   * very short documents
     * or maybe, shorter than OpenWebTextv2's version, if it exists
-* command line args for
+
+## optimization ideas
 * for each domain, try headless vs headful, and also with/without extensions, and find the cheapest setup that works

@@ -4,12 +4,19 @@ use serde::Deserialize;
 
 use tokio::task::JoinHandle;
 
-const WORKER_COUNT: usize = 4;
-const EXTENSIONS: [&str; 3] = [
-  "uBlock0.chromium",
-  "Consent-O-Matic-1.0.13/Extension/",
-  "bypass-paywalls-chrome-clean-v3.6.1.0",
-];
+use clap::{arg, Parser};
+
+const EXTENSIONS: [&str; 2] =
+  ["uBlock0.chromium", "bypass-paywalls-chrome-clean-v3.6.1.0"];
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct ScrapeOptions {
+  #[arg(long, default_value_t = 1)]
+  worker_count: u16,
+  #[arg(long, default_value_t = false)]
+  descend_urls: bool,
+}
 
 macro_rules! panic_with_stderr {
   ($output:ident, $process_name:literal) => {
@@ -31,7 +38,7 @@ struct ParsedDocument {
   status: i32,
 }
 
-fn scrape_url(url: &str, folder_name: &str) {
+fn scrape_url(url: &str, folder_name: &str, options: &ScrapeOptions) {
   let mut browsertrix_command = Command::new("docker");
   browsertrix_command
     .arg("run")
@@ -51,8 +58,12 @@ fn scrape_url(url: &str, folder_name: &str) {
     .args(["-v", "./chrome_profile/:/chrome_profile/"])
     .args(["-d", "webrecorder/browsertrix-crawler"])
     .arg("crawl")
-    .args(["--profile", "\"/chrome_profile/profile.tar.gz\""])
-    .args(["--workers", WORKER_COUNT.to_string().as_ref()])
+    .args(["--profile", "\"/chrome_profile/profile.tar.gz\""]);
+  if !options.descend_urls {
+    browsertrix_command.args(["--pageLimit", "1"]);
+  }
+  browsertrix_command
+    .args(["--workers", options.worker_count.to_string().as_ref()])
     .args(["--url", url])
     .arg("--text")
     .args(["--collection", folder_name]);
@@ -159,19 +170,14 @@ fn save_documents(
   Ok(())
 }
 
-#[tokio::main]
-async fn main() {
-  let urls = [
-    "https://example.com/",
-    "https://kristenrankin.art/",
-    //"https://webscraper.io/test-sites/e-commerce/allinone/",
-  ];
+async fn scrape_urls(urls: &[&str], options: ScrapeOptions) {
+  //println!("options: {:?}", options);
   let mut document_processing_join_handles: Vec<JoinHandle<()>> = vec![];
 
   for (index, url) in urls.into_iter().enumerate() {
     println!("{}: {}", index, url);
     let folder_name = format!("{}", index);
-    scrape_url(url, &folder_name);
+    scrape_url(url, &folder_name, &options);
     document_processing_join_handles.push(tokio::spawn(async move {
       let documents = gather_documents_from_crawl(&folder_name);
       save_documents(&folder_name, documents)
@@ -184,4 +190,14 @@ async fn main() {
       .await
       .expect("Failed to join document processing handle");
   }
+}
+
+#[tokio::main]
+async fn main() {
+  let urls = [
+    "https://example.com/",
+    "https://kristenrankin.art/",
+    //"https://webscraper.io/test-sites/e-commerce/allinone/",
+  ];
+  scrape_urls(&urls, ScrapeOptions::parse()).await;
 }
