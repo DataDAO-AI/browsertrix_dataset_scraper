@@ -2,7 +2,10 @@ Rust code for scraping with Browsertrix.
 
 ## to run:
 
-First, ensure that docker and [Browsertrix Crawler](https://crawler.docs.browsertrix.com/user-guide/) are installed.
+First, ensure that docker and [Browsertrix Crawler](https://crawler.docs.browsertrix.com/user-guide/) are installed. Run `cargo build --release` to build the executable, then run `./target/release/browsertrix_scraper` to run the scraper. The following args can be used:
+  * `--url-file <path>` sets the path to the file containing the list of URLs to scrape. The default is `./urls.txt`. This should be a `.txt` file where each line is a URL to scrape. Empty lines and lines starting with `/` will be ignored.
+  * `--workers <N>` sets the number of threads to use
+  * `--descend-urls` will attempt to crawl sub-directories of each URL in the list, rather than just scraping the listed URLs (which is the default behavior).
 
 # plugins
 
@@ -23,11 +26,8 @@ docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/
 ```
 
 ## todo
-* reorder urls such that requests to any single domain are as spread out as possible to avoid rate limiting
-* log failures
-  * status code
-  * very short documents
-    * or maybe, shorter than OpenWebTextv2's version, if it exists
+* more detailed failure logs
 
-## optimization ideas
+## optimization plans
 * for each domain, try headless vs headful, and also with/without extensions, and find the cheapest setup that works
+  * can any extensions be used in headless mode? Would be nice to ublock

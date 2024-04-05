@@ -1,10 +1,12 @@
 [package]
-name = "browsertrix_dataset_scraper"
+name = "browsertrix_scraper"
 version = "0.0.0"
 edition = "2021"
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"] }
+ordered-float = "4.2.0"
 serde = { version = "1.0.197", features = ["derive"] }
 simd-json = "0.13.9"
+tldextract = "0.6.0"
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }

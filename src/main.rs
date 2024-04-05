@@ -1,21 +1,52 @@
-use std::{fs, io::Write, process::Command};
+use std::{
+  collections::HashMap,
+  fs::{self, File, OpenOptions},
+  io::{BufRead, BufReader, Write},
+  path::Path,
+  process::Command,
+};
 
+use ordered_float::OrderedFloat;
 use serde::Deserialize;
 
+use tldextract::{TldExtractor, TldOption};
 use tokio::task::JoinHandle;
 
 use clap::{arg, Parser};
 
+const LINES_PER_CHUNK: usize = 1000;
+const FAILURE_LOG_NAME: &str = "failure_log.txt";
+
 const EXTENSIONS: [&str; 2] =
   ["uBlock0.chromium", "bypass-paywalls-chrome-clean-v3.6.1.0"];
+
+enum ScrapeError {
+  NoPagesJson(usize),
+  JsonParse(usize),
+}
+
+impl ScrapeError {
+  fn description(&self) -> String {
+    match self {
+      Self::NoPagesJson(index) => {
+        format!("No pages.jsonl file found for url on line {}", index)
+      }
+      ScrapeError::JsonParse(index) => {
+        format!("Failed to parse json document on line {}", index)
+      }
+    }
+  }
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct ScrapeOptions {
   #[arg(long, default_value_t = 1)]
-  worker_count: u16,
+  workers: u16,
   #[arg(long, default_value_t = false)]
   descend_urls: bool,
+  #[arg(long, default_value = "urls.txt")]
+  url_file: String,
 }
 
 macro_rules! panic_with_stderr {
@@ -63,11 +94,10 @@ fn scrape_url(url: &str, folder_name: &str, options: &ScrapeOptions) {
     browsertrix_command.args(["--pageLimit", "1"]);
   }
   browsertrix_command
-    .args(["--workers", options.worker_count.to_string().as_ref()])
+    .args(["--workers", options.workers.to_string().as_ref()])
     .args(["--url", url])
     .arg("--text")
     .args(["--collection", folder_name]);
-  //println!("{:?}", browsertrix_command);
   let browsertrix_output = browsertrix_command
     .output()
     .expect("failed to execte browsertrix through docker");
@@ -115,30 +145,29 @@ fn scrape_url(url: &str, folder_name: &str, options: &ScrapeOptions) {
   }
 }
 
-fn gather_documents_from_crawl(folder_name: &str) -> Vec<ParsedDocument> {
+fn gather_documents_from_crawl(
+  index: usize,
+) -> Result<Vec<ParsedDocument>, ScrapeError> {
   let file_contents = fs::read_to_string(format!(
     "./crawls/collections/{}/pages/pages.jsonl",
-    folder_name
+    index.to_string()
   ))
-  .expect(&format!(
-    "Failed to open pages.jsonl file for {}",
-    folder_name
-  ));
+  .map_err(|_err| ScrapeError::NoPagesJson(index))?;
   let mut lines = file_contents.lines().into_iter();
   lines.next();
   let mut line_strings = lines
     .map(|line| String::from(line))
     .collect::<Vec<String>>();
-  let documents: Vec<ParsedDocument> = line_strings
+  let documents: Result<Vec<ParsedDocument>, ScrapeError> = line_strings
     .iter_mut()
     .filter_map(|line| {
       if line.is_empty() {
         None
       } else {
-        Some(unsafe { simd_json::from_str(line) }.expect(&format!(
-          "Failed to parse json document for {}",
-          folder_name
-        )))
+        Some(
+          unsafe { simd_json::from_str(line) }
+            .map_err(|_err| ScrapeError::JsonParse(index)),
+        )
       }
     })
     .collect();
@@ -170,18 +199,101 @@ fn save_documents(
   Ok(())
 }
 
-async fn scrape_urls(urls: &[&str], options: ScrapeOptions) {
-  //println!("options: {:?}", options);
+fn reorder_urls(urls: Vec<String>) -> Vec<String> {
+  let extractor = TldExtractor::new(TldOption::default());
+  let domain_url_pairs: Vec<(String, String)> = urls
+    .into_iter()
+    .filter_map(|url| {
+      if url.is_empty() || url.starts_with("/") {
+        None
+      } else {
+        match extractor.extract(&url) {
+          Ok(extracted) => match extracted.domain {
+            Some(domain) => Some((domain, url)),
+            None => None,
+          },
+          Err(_) => None,
+        }
+      }
+    })
+    .collect();
+  let mut domain_buckets: HashMap<String, Vec<String>> = HashMap::new();
+  for (domain, url) in domain_url_pairs {
+    match domain_buckets.get_mut(&domain) {
+      Some(bucket) => bucket.push(url),
+      None => {
+        domain_buckets.insert(domain, vec![url]);
+      }
+    }
+  }
+  let solo_bucket_count = domain_buckets
+    .values()
+    .filter(|bucket| bucket.len() == 1)
+    .count();
+  let mut solo_bucket_index = 0;
+  let mut precedences_and_domains = domain_buckets
+    .values()
+    .enumerate()
+    .map(|(bucket_index, bucket)| {
+      let bucket_size = bucket.len();
+      bucket
+        .into_iter()
+        .enumerate()
+        .map(|(url_index, url)| {
+          (
+            (bucket_index as f32) * 0.0001
+              + if bucket_size == 1 {
+                let precedence =
+                  solo_bucket_index as f32 / (solo_bucket_count - 1) as f32;
+                solo_bucket_index += 1;
+                0.01 + 0.98 * precedence
+              } else {
+                url_index as f32 / (bucket_size - 1) as f32
+              },
+            url.to_string(),
+          )
+        })
+        .collect::<Vec<(f32, String)>>()
+    })
+    .flatten()
+    .collect::<Vec<_>>();
+  precedences_and_domains
+    .sort_by_key(|(precedence, _)| OrderedFloat(*precedence));
+  precedences_and_domains
+    .into_iter()
+    .map(|(_, url)| url)
+    .collect()
+}
+
+async fn scrape_urls(
+  index_offset: usize,
+  urls: Vec<String>,
+  options: &ScrapeOptions,
+) {
   let mut document_processing_join_handles: Vec<JoinHandle<()>> = vec![];
 
   for (index, url) in urls.into_iter().enumerate() {
-    println!("{}: {}", index, url);
+    println!("{}: {}", index_offset + index, url);
     let folder_name = format!("{}", index);
-    scrape_url(url, &folder_name, &options);
+    scrape_url(&url, &folder_name, &options);
     document_processing_join_handles.push(tokio::spawn(async move {
-      let documents = gather_documents_from_crawl(&folder_name);
-      save_documents(&folder_name, documents)
-        .expect("Failed to save documents");
+      match gather_documents_from_crawl(index) {
+        Ok(documents) => {
+          save_documents(&folder_name, documents)
+            .expect("Failed to save documents");
+        }
+        Err(scrape_error) => {
+          println!("failed!");
+          let mut log_file = OpenOptions::new()
+            .create_new(!Path::new(FAILURE_LOG_NAME).exists())
+            .write(true)
+            .append(true)
+            .open(FAILURE_LOG_NAME)
+            .unwrap();
+          writeln!(log_file, "{}", scrape_error.description())
+            .expect("Couldn't open error_log.txt");
+        }
+      }
     }));
   }
 
@@ -194,10 +306,27 @@ async fn scrape_urls(urls: &[&str], options: ScrapeOptions) {
 
 #[tokio::main]
 async fn main() {
-  let urls = [
-    "https://example.com/",
-    "https://kristenrankin.art/",
-    //"https://webscraper.io/test-sites/e-commerce/allinone/",
-  ];
-  scrape_urls(&urls, ScrapeOptions::parse()).await;
+  let options = ScrapeOptions::parse();
+  let mut url_lines = BufReader::new(
+    File::open(options.url_file.clone())
+      .expect(&format!("Failed to load file '{}'", options.url_file)),
+  )
+  .lines()
+  .peekable();
+  let mut lines_read = 0;
+  while url_lines.by_ref().peek().is_some() {
+    let line_chunk: Vec<_> = url_lines
+      .by_ref()
+      .take(LINES_PER_CHUNK)
+      .map(|maybe_line| maybe_line.expect("Failed to get line of url file"))
+      .collect();
+    let line_count = line_chunk.len();
+    /*println!(
+      "\n{:?}\n\n{:?}\n\n",
+      line_chunk.clone(),
+      reorder_urls(line_chunk.clone())
+    );*/
+    scrape_urls(lines_read, reorder_urls(line_chunk), &options).await;
+    lines_read += line_count;
+  }
 }
