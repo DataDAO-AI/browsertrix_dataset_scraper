@@ -2,6 +2,7 @@ use std::{
   collections::HashMap,
   fs::{self, File, OpenOptions},
   io::{BufRead, BufReader, Write},
+  os::unix::process::CommandExt,
   path::Path,
   process::Command,
 };
@@ -47,6 +48,8 @@ struct ScrapeOptions {
   descend_urls: bool,
   #[arg(long, default_value = "urls.txt")]
   url_file: String,
+  #[arg(long, default_value = None)]
+  uid: Option<u32>,
 }
 
 macro_rules! panic_with_stderr {
@@ -71,6 +74,9 @@ struct ParsedDocument {
 
 fn scrape_url(url: &str, folder_name: &str, options: &ScrapeOptions) {
   let mut browsertrix_command = Command::new("docker");
+  if let Some(uid) = options.uid {
+    browsertrix_command.uid(uid);
+  }
   browsertrix_command
     .arg("run")
     .args([
