@@ -21,18 +21,18 @@ const EXTENSIONS: [&str; 2] =
   ["uBlock0.chromium", "bypass-paywalls-chrome-clean-v3.6.1.0"];
 
 enum ScrapeError {
-  NoPagesJson(usize),
-  JsonParse(usize),
+  NoPagesJson(String),
+  JsonParse(String),
 }
 
 impl ScrapeError {
   fn description(&self) -> String {
     match self {
-      Self::NoPagesJson(index) => {
-        format!("No pages.jsonl file found for url on line {}", index)
+      Self::NoPagesJson(url) => {
+        format!("No pages.jsonl file found for url `{}`", url)
       }
-      ScrapeError::JsonParse(index) => {
-        format!("Failed to parse json document on line {}", index)
+      ScrapeError::JsonParse(url) => {
+        format!("Failed to parse json document for url `{}`", url)
       }
     }
   }
@@ -147,12 +147,13 @@ fn scrape_url(url: &str, folder_name: &str, options: &ScrapeOptions) {
 
 fn gather_documents_from_crawl(
   index: usize,
+  url: String,
 ) -> Result<Vec<ParsedDocument>, ScrapeError> {
   let file_contents = fs::read_to_string(format!(
     "./crawls/collections/{}/pages/pages.jsonl",
     index.to_string()
   ))
-  .map_err(|_err| ScrapeError::NoPagesJson(index))?;
+  .map_err(|_err| ScrapeError::NoPagesJson(url.clone()))?;
   let mut lines = file_contents.lines().into_iter();
   lines.next();
   let mut line_strings = lines
@@ -166,7 +167,7 @@ fn gather_documents_from_crawl(
       } else {
         Some(
           unsafe { simd_json::from_str(line) }
-            .map_err(|_err| ScrapeError::JsonParse(index)),
+            .map_err(|_err| ScrapeError::JsonParse(url.clone())),
         )
       }
     })
@@ -277,7 +278,7 @@ async fn scrape_urls(
     let folder_name = format!("{}", index);
     scrape_url(&url, &folder_name, &options);
     document_processing_join_handles.push(tokio::spawn(async move {
-      match gather_documents_from_crawl(index) {
+      match gather_documents_from_crawl(index, url) {
         Ok(documents) => {
           save_documents(&folder_name, documents)
             .expect("Failed to save documents");
@@ -313,20 +314,24 @@ async fn main() {
   )
   .lines()
   .peekable();
+  let mut chunk_index = 0;
   let mut lines_read = 0;
   while url_lines.by_ref().peek().is_some() {
+    println!("\nChunk {}, read {} lines so far", chunk_index, lines_read);
+    chunk_index += 1;
     let line_chunk: Vec<_> = url_lines
       .by_ref()
       .take(LINES_PER_CHUNK)
       .map(|maybe_line| maybe_line.expect("Failed to get line of url file"))
       .collect();
-    let line_count = line_chunk.len();
+    let reordered_lines = reorder_urls(line_chunk.clone());
+    let line_count = reordered_lines.len();
     /*println!(
       "\n{:?}\n\n{:?}\n\n",
       line_chunk.clone(),
       reorder_urls(line_chunk.clone())
     );*/
-    scrape_urls(lines_read, reorder_urls(line_chunk), &options).await;
+    scrape_urls(lines_read, reordered_lines, &options).await;
     lines_read += line_count;
   }
 }

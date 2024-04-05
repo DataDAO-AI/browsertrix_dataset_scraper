@@ -27,7 +27,5 @@ docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/
 
 ## todo
 * more detailed failure logs
-
-## optimization plans
 * for each domain, try headless vs headful, and also with/without extensions, and find the cheapest setup that works
   * can any extensions be used in headless mode? Would be nice to ublock
