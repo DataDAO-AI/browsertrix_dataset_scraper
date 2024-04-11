@@ -27,7 +27,7 @@ docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/
 ```
 
 ## todo
-* more detailed failure logs
+* keep a url_log file that consists of a list of URLs that have been scraped, where line numbers map to folder names
 * test an alternative concurrency approach:
   * have each thread spawn it's own docker instance and run multiple instances of browsertrix with just one worker each, rather than a single browsertrix instance with multiple internal workers
 * for each domain, try headless vs headful, and also with/without extensions, and find the cheapest setup that works
