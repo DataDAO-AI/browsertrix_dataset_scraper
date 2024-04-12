@@ -2,3 +2,4 @@
 /crawls
 /dataset
 *.DS_Store
+/url_chunks

@@ -1,43 +1,44 @@
 use std::{
   collections::HashMap,
-  fs::{self, File, OpenOptions},
+  fs::File,
   io::{BufRead, BufReader, Write},
   os::unix::process::CommandExt,
-  path::Path,
   process::Command,
 };
 
 use ordered_float::OrderedFloat;
-use serde::Deserialize;
 
 use tldextract::{TldExtractor, TldOption};
 use tokio::task::JoinHandle;
 
 use clap::{arg, Parser};
 
-const LINES_PER_CHUNK: usize = 1000;
-const FAILURE_LOG_NAME: &str = "failure_log.txt";
+const LINES_PER_CHUNK: usize = 2;
+const TIMEOUT_SECONDS: u64 = 10;
 
 const EXTENSIONS: [&str; 2] =
   ["uBlock0.chromium", "bypass-paywalls-chrome-clean-v3.6.1.0"];
 
-enum ScrapeError {
-  NoPagesJson(String),
-  JsonParse(String),
+/*enum ScrapeError {
+  NoPagesJson(usize),
+  ParsePagesJsonLineFailure(usize, usize),
 }
 
 impl ScrapeError {
   fn description(&self) -> String {
     match self {
-      Self::NoPagesJson(url) => {
-        format!("No pages.jsonl file found for url `{}`", url)
+      Self::NoPagesJson(chunk_index) => {
+        format!("No pages.jsonl file found for chunk `{}`", chunk_index)
       }
-      ScrapeError::JsonParse(url) => {
-        format!("Failed to parse json document for url `{}`", url)
+      ScrapeError::ParsePagesJsonLineFailure(chunk_index, sub_index) => {
+        format!(
+          "Failed to parse json document for chunk {}, url {}",
+          chunk_index, sub_index
+        )
       }
     }
   }
-}
+}*/
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -65,18 +66,23 @@ macro_rules! panic_with_stderr {
   };
 }
 
-#[derive(Deserialize, Debug)]
+/*#[derive(Deserialize, Debug)]
 struct ParsedDocument {
   url: String,
-  text: String,
+  text: Option<String>,
   status: i32,
-}
+}*/
 
-fn scrape_url(url: &str, folder_name: &str, options: &ScrapeOptions) {
+fn scrape_url_file(
+  url_file_name: &str,
+  folder_name: &str,
+  options: &ScrapeOptions,
+) {
   let mut browsertrix_command = Command::new("docker");
   if let Some(uid) = options.uid {
     browsertrix_command.uid(uid);
   }
+  println!("{}", url_file_name);
   browsertrix_command
     .arg("run")
     .args([
@@ -93,20 +99,23 @@ fn scrape_url(url: &str, folder_name: &str, options: &ScrapeOptions) {
     .args(["-v", "./crawls:/crawls/"])
     .args(["-v", "./chrome_plugins/:/ext/"])
     .args(["-v", "./chrome_profile/:/chrome_profile/"])
+    .args(["-v", "./url_chunks/:/url_chunks/"])
     .args(["-d", "webrecorder/browsertrix-crawler"])
     .arg("crawl")
     .args(["--profile", "\"/chrome_profile/profile.tar.gz\""]);
   if !options.descend_urls {
-    browsertrix_command.args(["--pageLimit", "1"]);
+    browsertrix_command.args(["--depth", "0"]);
   }
   browsertrix_command
     .args(["--workers", options.workers.to_string().as_ref()])
-    .args(["--url", url])
-    .arg("--text")
+    .args(["--urlFile", url_file_name])
+    .args(["--text", "to-pages"])
+    .args(["--behaviors", "autoscroll"])
+    .args(["--timeout", &format!("{}", TIMEOUT_SECONDS)])
     .args(["--collection", folder_name]);
   let browsertrix_output = browsertrix_command
     .output()
-    .expect("failed to execte browsertrix through docker");
+    .expect("failed to execute browsertrix through docker");
   let browsertrix_stdout = match browsertrix_output.status.code() {
     Some(exit_code) => {
       if exit_code == 0 {
@@ -151,35 +160,36 @@ fn scrape_url(url: &str, folder_name: &str, options: &ScrapeOptions) {
   }
 }
 
-fn gather_documents_from_crawl(
-  index: usize,
-  url: String,
-) -> Result<Vec<ParsedDocument>, ScrapeError> {
+/*fn gather_documents_from_crawl(
+  chunk_index: usize,
+) -> Result<Vec<Result<ParsedDocument, ScrapeError>>, ScrapeError> {
   let file_contents = fs::read_to_string(format!(
     "./crawls/collections/{}/pages/pages.jsonl",
-    index.to_string()
+    chunk_index.to_string()
   ))
-  .map_err(|_err| ScrapeError::NoPagesJson(url.clone()))?;
+  .map_err(|_err| ScrapeError::NoPagesJson(chunk_index))?;
   let mut lines = file_contents.lines().into_iter();
   lines.next();
   let mut line_strings = lines
     .map(|line| String::from(line))
     .collect::<Vec<String>>();
-  let documents: Result<Vec<ParsedDocument>, ScrapeError> = line_strings
+  let documents: Vec<Result<ParsedDocument, ScrapeError>> = line_strings
     .iter_mut()
-    .filter_map(|line| {
+    .enumerate()
+    .filter_map(|(i, line)| {
       if line.is_empty() {
         None
       } else {
-        Some(
-          unsafe { simd_json::from_str(line) }
-            .map_err(|_err| ScrapeError::JsonParse(url.clone())),
-        )
+        let document_hopefuly: Result<ParsedDocument, _> =
+          unsafe { simd_json::from_str(line) };
+        Some(document_hopefuly.map_err(|_err| {
+          ScrapeError::ParsePagesJsonLineFailure(chunk_index, i)
+        }))
       }
     })
     .collect();
-  documents
-}
+  Ok(documents)
+}*/
 
 fn ensure_directory_exists(path: &str) {
   match std::fs::create_dir_all(path) {
@@ -191,20 +201,22 @@ fn ensure_directory_exists(path: &str) {
   }
 }
 
-fn save_documents(
+/*fn save_documents(
   folder_name: &str,
-  documents: Vec<ParsedDocument>,
+  documents: Vec<Result<ParsedDocument, ScrapeError>>,
 ) -> std::io::Result<()> {
   ensure_directory_exists(&format!("./dataset/{}/", folder_name));
-  for (index, document) in documents.into_iter().enumerate() {
-    let mut file = std::fs::File::create(format!(
-      "./dataset/{}/{}.txt",
-      folder_name, index
-    ))?;
-    file.write_all(document.text.as_bytes())?;
+  for (index, document_or_error) in documents.into_iter().enumerate() {
+    if let Ok(document) = document_or_error {
+      if let Some(document_text) = document.text {
+        let mut file =
+          File::create(format!("./dataset/{}/{}.txt", folder_name, index))?;
+        file.write_all(document_text.as_bytes())?;
+      }
+    }
   }
   Ok(())
-}
+}*/
 
 fn reorder_urls(urls: Vec<String>) -> Vec<String> {
   let extractor = TldExtractor::new(TldOption::default());
@@ -273,18 +285,32 @@ fn reorder_urls(urls: Vec<String>) -> Vec<String> {
 }
 
 async fn scrape_urls(
-  index_offset: usize,
+  chunk_index: usize,
   urls: Vec<String>,
   options: &ScrapeOptions,
 ) {
-  let mut document_processing_join_handles: Vec<JoinHandle<()>> = vec![];
-
-  for (index, url) in urls.into_iter().enumerate() {
-    println!("{}: {}", index_offset + index, url);
-    let folder_name = format!("{}", index);
-    scrape_url(&url, &folder_name, &options);
+  if urls.len() > 0 {
+    let mut document_processing_join_handles: Vec<JoinHandle<()>> = vec![];
+    let folder_name = format!("{}", chunk_index);
+    ensure_directory_exists("./url_chunks/");
+    let url_chunk_file_name = format!("./url_chunks/{}.txt", chunk_index);
+    let mut temp_url_file = File::create(&url_chunk_file_name).unwrap();
+    temp_url_file
+      .write_all(
+        urls
+          .into_iter()
+          .reduce(|a, b| a + "\n" + &b)
+          .unwrap()
+          .as_bytes(),
+      )
+      .unwrap();
+    scrape_url_file(
+      &format!("/url_chunks/{}.txt", chunk_index),
+      &folder_name,
+      &options,
+    );
     document_processing_join_handles.push(tokio::spawn(async move {
-      match gather_documents_from_crawl(index, url) {
+      /*match gather_documents_from_crawl(chunk_index) {
         Ok(documents) => {
           save_documents(&folder_name, documents)
             .expect("Failed to save documents");
@@ -300,14 +326,14 @@ async fn scrape_urls(
           writeln!(log_file, "{}", scrape_error.description())
             .expect("Couldn't open error_log.txt");
         }
-      }
+      }*/
     }));
-  }
 
-  for handle in document_processing_join_handles {
-    handle
-      .await
-      .expect("Failed to join document processing handle");
+    for handle in document_processing_join_handles {
+      handle
+        .await
+        .expect("Failed to join document processing handle");
+    }
   }
 }
 
@@ -337,7 +363,7 @@ async fn main() {
       line_chunk.clone(),
       reorder_urls(line_chunk.clone())
     );*/
-    scrape_urls(lines_read, reordered_lines, &options).await;
+    scrape_urls(chunk_index, reordered_lines, &options).await;
     lines_read += line_count;
   }
 }
