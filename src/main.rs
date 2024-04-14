@@ -51,6 +51,8 @@ struct ScrapeOptions {
   url_file: String,
   #[arg(long, default_value = None)]
   uid: Option<u32>,
+  #[arg(long, default_value_t = 0)]
+  chunk: usize,
 }
 
 macro_rules! panic_with_stderr {
@@ -133,7 +135,11 @@ fn scrape_url_file(
       }
     }
     None => {
-      panic!("Failed to get exit status code for browsertrix docker process")
+      panic!(
+        "Failed to get exit status code for docker process. \
+        Full status:\n\n{:?}",
+        browsertrix_output.status
+      );
     }
   };
   let docker_wait_output = Command::new("docker")
@@ -155,7 +161,11 @@ fn scrape_url_file(
       }
     }
     None => {
-      panic!("Failed to get exit status code for docker wait process");
+      panic!(
+        "Failed to get exit status code for docker wait process. \
+        Full status:\n\n{:?}",
+        docker_wait_output.status
+      );
     }
   }
 }
@@ -349,7 +359,6 @@ async fn main() {
   let mut chunk_index = 0;
   let mut lines_read = 0;
   while url_lines.by_ref().peek().is_some() {
-    println!("\nChunk {}, read {} lines so far", chunk_index, lines_read);
     chunk_index += 1;
     let line_chunk: Vec<_> = url_lines
       .by_ref()
@@ -358,12 +367,10 @@ async fn main() {
       .collect();
     let reordered_lines = reorder_urls(line_chunk.clone());
     let line_count = reordered_lines.len();
-    /*println!(
-      "\n{:?}\n\n{:?}\n\n",
-      line_chunk.clone(),
-      reorder_urls(line_chunk.clone())
-    );*/
-    scrape_urls(chunk_index, reordered_lines, &options).await;
+    if chunk_index > options.chunk {
+      println!("\nChunk {}, read {} lines so far", chunk_index, lines_read);
+      scrape_urls(chunk_index, reordered_lines, &options).await;
+    }
     lines_read += line_count;
   }
 }
