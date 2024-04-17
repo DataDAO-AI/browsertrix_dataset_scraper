@@ -51,8 +51,8 @@ struct ScrapeOptions {
   url_file: String,
   #[arg(long, default_value = None)]
   uid: Option<u32>,
-  #[arg(long, default_value_t = 0)]
-  chunk: usize,
+  #[arg(long, default_value = None)]
+  chunk: Option<usize>,
   #[arg(long, default_value_t = false)]
   count_documents: bool,
 }
@@ -375,7 +375,39 @@ fn count_documents() {
 }
 
 async fn scrape(options: ScrapeOptions) {
-  let skipped_chunk_count = options.chunk.checked_sub(1).unwrap_or(0);
+  let skipped_chunk_count = match options.chunk {
+    Some(chunk_arg) => chunk_arg.checked_sub(1).unwrap_or(0),
+    None => std::fs::read_dir("./url_chunks/")
+      .map(|url_chunks_entries| {
+        url_chunks_entries.fold(
+          None,
+          |current_highest_chunk_index: Option<usize>, maybe_chunk_entry| {
+            if let Ok(chunk_entry) = maybe_chunk_entry {
+              let chunk_entry_name_os = chunk_entry.file_name();
+              let chunk_entry_name = chunk_entry_name_os.to_str().unwrap();
+              let chunk_name = chunk_entry_name.split(".").next().unwrap();
+              if let Ok(x) = chunk_name.parse::<usize>() {
+                Some(match current_highest_chunk_index {
+                  Some(current_highest_chunk_index) => {
+                    current_highest_chunk_index.max(x)
+                  }
+                  None => x,
+                })
+              } else {
+                current_highest_chunk_index
+              }
+            } else {
+              current_highest_chunk_index
+            }
+          },
+        )
+      })
+      .unwrap_or(None)
+      .map(|highest_chunk_index| {
+        highest_chunk_index.checked_sub(1).unwrap_or(0)
+      })
+      .unwrap_or(0),
+  };
   let mut url_lines = BufReader::new(
     File::open(options.url_file.clone())
       .expect(&format!("Failed to load file '{}'", options.url_file)),
