@@ -28,8 +28,6 @@ docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/
 ```
 
 ## todo
-* fix `--chunk` off-by-one weirdness
-* make `--chunk` just skip the first urls rather than just rejecting them in the while loop, so startup doesn't take as long
 * on startup, if `--chunk` isn't specified, look for the `/url_chunks/` file with the largest index, and start from there (to allow for startup after crashes without manually changing the `--chunk` arg)
   * if `/url_chunks/` is empty or doesn't exist, start at 0
 * On the scraping server, chaning the service to restart itself on a crash, and remove the `--chunk` arg from `startup.sh`

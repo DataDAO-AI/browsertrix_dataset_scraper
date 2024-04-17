@@ -230,7 +230,7 @@ fn ensure_directory_exists(path: &str) {
   Ok(())
 }*/
 
-fn reorder_urls(urls: Vec<String>) -> Vec<String> {
+fn preprocess_urls(urls: Vec<String>) -> Vec<String> {
   let extractor = TldExtractor::new(TldOption::default());
   let domain_url_pairs: Vec<(String, String)> = urls
     .into_iter()
@@ -374,37 +374,41 @@ fn count_documents() {
   println!("Total document count: {}", total_document_count);
 }
 
+async fn scrape(options: ScrapeOptions) {
+  let skipped_chunk_count = options.chunk.checked_sub(1).unwrap_or(0);
+  let mut url_lines = BufReader::new(
+    File::open(options.url_file.clone())
+      .expect(&format!("Failed to load file '{}'", options.url_file)),
+  )
+  .lines()
+  .skip(skipped_chunk_count * LINES_PER_CHUNK)
+  .peekable();
+  let mut chunk_index = skipped_chunk_count;
+  let mut urls_attempted = 0;
+  while url_lines.by_ref().peek().is_some() {
+    chunk_index += 1;
+    let line_chunk: Vec<_> = url_lines
+      .by_ref()
+      .take(LINES_PER_CHUNK)
+      .map(|maybe_line| maybe_line.expect("Failed to get line of url file"))
+      .collect();
+    let preprocessed_urls = preprocess_urls(line_chunk.clone());
+    let url_count = preprocessed_urls.len();
+    println!(
+      "\nChunk {}, attempted {} urls since startup",
+      chunk_index, urls_attempted
+    );
+    scrape_urls(chunk_index, preprocessed_urls, &options).await;
+    urls_attempted += url_count;
+  }
+}
+
 #[tokio::main]
 async fn main() {
   let options = ScrapeOptions::parse();
   if options.count_documents {
     count_documents();
   } else {
-    let mut url_lines = BufReader::new(
-      File::open(options.url_file.clone())
-        .expect(&format!("Failed to load file '{}'", options.url_file)),
-    )
-    .lines()
-    .peekable();
-    let mut chunk_index = 0;
-    let mut lines_read = 0;
-    while url_lines.by_ref().peek().is_some() {
-      chunk_index += 1;
-      let line_chunk: Vec<_> = url_lines
-        .by_ref()
-        .take(LINES_PER_CHUNK)
-        .map(|maybe_line| maybe_line.expect("Failed to get line of url file"))
-        .collect();
-      let reordered_lines = reorder_urls(line_chunk.clone());
-      let line_count = reordered_lines.len();
-      if chunk_index > options.chunk {
-        println!(
-          "\nChunk {}, attempted {} urls so far",
-          chunk_index, lines_read
-        );
-        scrape_urls(chunk_index, reordered_lines, &options).await;
-      }
-      lines_read += line_count;
-    }
+    scrape(options).await;
   }
 }
