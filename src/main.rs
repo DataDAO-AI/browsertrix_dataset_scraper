@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 
 use clap::{arg, Parser};
 
-const LINES_PER_CHUNK: usize = 1000;
+const LINES_PER_CHUNK: usize = 2;
 const TIMEOUT_SECONDS: u64 = 10;
 
 const EXTENSIONS: [&str; 2] =
@@ -377,8 +377,8 @@ fn count_documents() {
 async fn scrape(options: ScrapeOptions) {
   let skipped_chunk_count = match options.chunk {
     Some(chunk_arg) => chunk_arg.checked_sub(1).unwrap_or(0),
-    None => std::fs::read_dir("./url_chunks/")
-      .map(|url_chunks_entries| {
+    None => {
+      match std::fs::read_dir("./url_chunks/").map(|url_chunks_entries| {
         url_chunks_entries.fold(
           None,
           |current_highest_chunk_index: Option<usize>, maybe_chunk_entry| {
@@ -401,12 +401,18 @@ async fn scrape(options: ScrapeOptions) {
             }
           },
         )
-      })
-      .unwrap_or(None)
-      .map(|highest_chunk_index| {
-        highest_chunk_index.checked_sub(1).unwrap_or(0)
-      })
-      .unwrap_or(0),
+      }) {
+        Ok(Some(highest_found_chunk_index)) => {
+          println!(
+            "Automatically starting from chunk {}, the highest index found in \
+            the url_chunks directory",
+            highest_found_chunk_index
+          );
+          highest_found_chunk_index.checked_sub(1).unwrap_or(0)
+        }
+        _ => 0,
+      }
+    }
   };
   let mut url_lines = BufReader::new(
     File::open(options.url_file.clone())

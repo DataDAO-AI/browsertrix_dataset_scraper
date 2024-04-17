@@ -28,6 +28,5 @@ docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/
 ```
 
 ## todo
-* On the scraping server, chaning the service to restart itself on a crash, and remove the `--chunk` arg from `startup.sh`
 * for each domain, try headless vs headful, and also with/without extensions, and find the cheapest setup that works
   * can any extensions be used in headless mode? Would be nice to ublock
