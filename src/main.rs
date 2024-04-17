@@ -53,6 +53,8 @@ struct ScrapeOptions {
   uid: Option<u32>,
   #[arg(long, default_value_t = 0)]
   chunk: usize,
+  #[arg(long, default_value_t = false)]
+  count_documents: bool,
 }
 
 macro_rules! panic_with_stderr {
@@ -347,30 +349,62 @@ async fn scrape_urls(
   }
 }
 
+fn count_documents() {
+  let collections_entries = std::fs::read_dir("./crawls/collections/").expect(
+    "Failed to open directory /crawls/collections/ while counting documents",
+  );
+  let mut total_document_count = 0;
+  for maybe_collections_entry in collections_entries {
+    if let Ok(collections_entry) = maybe_collections_entry {
+      let chunk_directory_name = collections_entry.file_name();
+      let dir_name = chunk_directory_name.to_str().unwrap();
+      match std::fs::read_to_string(format!(
+        "crawls/collections/{}/pages/pages.jsonl",
+        dir_name
+      )) {
+        Ok(file_contents) => {
+          total_document_count += file_contents.matches("\"text\":").count();
+        }
+        Err(_) => {
+          println!("Failed to read pages.jsonl for chunk {}", dir_name);
+        }
+      }
+    }
+  }
+  println!("Total document count: {}", total_document_count);
+}
+
 #[tokio::main]
 async fn main() {
   let options = ScrapeOptions::parse();
-  let mut url_lines = BufReader::new(
-    File::open(options.url_file.clone())
-      .expect(&format!("Failed to load file '{}'", options.url_file)),
-  )
-  .lines()
-  .peekable();
-  let mut chunk_index = 0;
-  let mut lines_read = 0;
-  while url_lines.by_ref().peek().is_some() {
-    chunk_index += 1;
-    let line_chunk: Vec<_> = url_lines
-      .by_ref()
-      .take(LINES_PER_CHUNK)
-      .map(|maybe_line| maybe_line.expect("Failed to get line of url file"))
-      .collect();
-    let reordered_lines = reorder_urls(line_chunk.clone());
-    let line_count = reordered_lines.len();
-    if chunk_index > options.chunk {
-      println!("\nChunk {}, read {} lines so far", chunk_index, lines_read);
-      scrape_urls(chunk_index, reordered_lines, &options).await;
+  if options.count_documents {
+    count_documents();
+  } else {
+    let mut url_lines = BufReader::new(
+      File::open(options.url_file.clone())
+        .expect(&format!("Failed to load file '{}'", options.url_file)),
+    )
+    .lines()
+    .peekable();
+    let mut chunk_index = 0;
+    let mut lines_read = 0;
+    while url_lines.by_ref().peek().is_some() {
+      chunk_index += 1;
+      let line_chunk: Vec<_> = url_lines
+        .by_ref()
+        .take(LINES_PER_CHUNK)
+        .map(|maybe_line| maybe_line.expect("Failed to get line of url file"))
+        .collect();
+      let reordered_lines = reorder_urls(line_chunk.clone());
+      let line_count = reordered_lines.len();
+      if chunk_index > options.chunk {
+        println!(
+          "\nChunk {}, attempted {} urls so far",
+          chunk_index, lines_read
+        );
+        scrape_urls(chunk_index, reordered_lines, &options).await;
+      }
+      lines_read += line_count;
     }
-    lines_read += line_count;
   }
 }

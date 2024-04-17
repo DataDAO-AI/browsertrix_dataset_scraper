@@ -7,7 +7,8 @@ First, ensure that docker and [Browsertrix Crawler](https://crawler.docs.browser
   * `--uid <uid>` sets the uid for the process that spawns the docker container for browsertrix. This can be helpful for getting the right permissions for running docker.
   * `--workers <N>` sets the number of threads to use
   * `--descend-urls` will attempt to crawl sub-directories of each URL in the list, rather than just scraping the listed URLs (which is the default behavior).
-
+  * `--chunk <N>` skips the first `N` chunks. This is useful for starting the scraper back up at a specific part of the url list after interruption.
+  * `--chunk-documents` will count the number of documents scraped so far, by looking over the `pages.jsonl` files in `./crawls/collections/`. If this argument as used the scraper won't run, the program will just count the number of scraped documents and then exit.
 # plugins
 
 To redownload the extensions that browsertrix will use in the crawl, run `download_plugins.sh`. After freshly downloading the extensions, they need to be manually configured. Current configuration:
@@ -27,8 +28,10 @@ docker run -e CHROME_FLAGS="--disable-extensions-except=/ext/uBlock0.chromium/,/
 ```
 
 ## todo
-* keep a url_log file that consists of a list of URLs that have been scraped, where line numbers map to folder names
-* test an alternative concurrency approach:
-  * have each thread spawn it's own docker instance and run multiple instances of browsertrix with just one worker each, rather than a single browsertrix instance with multiple internal workers
+* fix `--chunk` off-by-one weirdness
+* make `--chunk` just skip the first urls rather than just rejecting them in the while loop, so startup doesn't take as long
+* on startup, if `--chunk` isn't specified, look for the `/url_chunks/` file with the largest index, and start from there (to allow for startup after crashes without manually changing the `--chunk` arg)
+  * if `/url_chunks/` is empty or doesn't exist, start at 0
+* On the scraping server, chaning the service to restart itself on a crash, and remove the `--chunk` arg from `startup.sh`
 * for each domain, try headless vs headful, and also with/without extensions, and find the cheapest setup that works
   * can any extensions be used in headless mode? Would be nice to ublock
