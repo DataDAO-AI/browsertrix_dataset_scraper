@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 
 use clap::{arg, Parser};
 
-const LINES_PER_CHUNK: usize = 2;
+const LINES_PER_CHUNK: usize = 1000;
 const TIMEOUT_SECONDS: u64 = 10;
 
 const EXTENSIONS: [&str; 2] =
