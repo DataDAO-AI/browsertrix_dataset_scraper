@@ -89,6 +89,7 @@ fn scrape_url_file(
   println!("{}", url_file_name);
   browsertrix_command
     .arg("run")
+    .args(["--log-driver", "local", "--log-opt", "max-size=10m"])
     .args([
       "-e",
       &format!(
